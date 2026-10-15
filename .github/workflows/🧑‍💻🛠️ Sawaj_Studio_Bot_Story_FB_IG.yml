@@ -1,8 +1,8 @@
-name: 🧑‍💻🛠️ Sawaj_Studio_Bot_Story_FB_IG
+name: Sawaj Studio Bot Story FB IG
 
 on:
   schedule:
-    - cron: '30 23 * * *' # Har roz subah 5:00 AM IST
+    - cron: '30 23 * * *'   # 5:00 AM IST daily
   workflow_dispatch:
     inputs:
       mode:
@@ -30,12 +30,14 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-noto fonts-noto-color-emoji fonts-noto-cjk
+          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra fonts-noto-color-emoji fonts-noto-cjk
+          pip install --quiet --upgrade pip
           pip install --quiet requests urllib3 Pillow mutagen edge-tts gTTS google-auth google-auth-oauthlib google-api-python-client
 
       - name: Run Video Pipeline
         env:
           UPLOAD_MODE: ${{ github.event.inputs.mode || 'online' }}
+          PYTHONUNBUFFERED: "1"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HADITH_API_URL: ${{ secrets.HADITH_API_URL }}
@@ -71,18 +73,18 @@ jobs:
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
           INSTAGRAM_BUSINESS_ACCOUNT_ID: ${{ secrets.INSTAGRAM_BUSINESS_ACCOUNT_ID }}
         run: |
-          mkdir -p _work && cd _work
-          cat > Sawaj_studio_bot_story_fb_ig.py << 'PYEOF'
+          mkdir -p _work
+          cd _work
+          cat > bot.py << 'PYEOF'
           # ============================================================
-          # SAWAJ STUDIO BOT - STORY (FB + IG) - FINAL PRODUCTION VERSION
-          # All known high-risk points hardened
+          # SAWAJ STUDIO BOT - STORY (FB + IG) - HARDENED PRODUCTION
           # ============================================================
-          import os, re, time, subprocess, shutil, random, math, base64, traceback, json
+          import os, re, time, subprocess, shutil, random, base64, traceback, json, html
           from datetime import datetime
           import requests
           from requests.adapters import HTTPAdapter
           from urllib3.util.retry import Retry
-          from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+          from PIL import Image, ImageDraw, ImageFont
           from mutagen.mp3 import MP3
 
           C = {
@@ -134,13 +136,18 @@ jobs:
 
           def runc(cmd, t=1800):
               log("CMD: " + cmd[:130])
-              subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=t)
+              r = subprocess.run(cmd, shell=True, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=t)
+              if r.returncode != 0:
+                  err = r.stderr.decode("utf-8", "ignore").strip()[-600:]
+                  log(f"CMD FAILED (rc={r.returncode}): {err}", "ERROR")
+                  raise RuntimeError(f"Command failed: {err[:300]}")
 
           def new_session():
               s = requests.Session()
               r = Retry(total=6, backoff_factor=1.6, status_forcelist=[429,500,502,503,504])
               s.mount("https://", HTTPAdapter(max_retries=r))
-              s.headers.update({"User-Agent":"SawajStudioBot/2.2-Final"})
+              s.headers.update({"User-Agent":"SawajStudioBot/2.3-Final"})
               return s
 
           def dl(sess, url, path, min_sz=10000, retries=3):
@@ -156,7 +163,8 @@ jobs:
                               if w > 280*1024*1024: return False
                               f.write(c)
                       if w > min_sz: return True
-                  except: pass
+                  except Exception:
+                      pass
               return False
 
           BOOKS = [("eng-bukhari","ara-bukhari","Sahih al-Bukhari",7000),
@@ -184,10 +192,12 @@ jobs:
                               if ar_r.status_code==200:
                                   ad = ar_r.json().get("hadiths",[])
                                   if ad: ar = ad[0].get("text","").strip()
-                          except: pass
+                          except Exception:
+                              pass
                           return {"collection":n, "number":str(hh[0].get("hadithnumber") or num),
                                   "english":txt, "arabic":ar, "book":n}
-                      except: continue
+                      except Exception:
+                          continue
               return {"collection":"Sahih al-Bukhari","number":"1",
                       "english":"The reward of deeds depends upon the intentions.",
                       "arabic":"إنما الأعمال بالنيات","book":"Sahih al-Bukhari"}
@@ -201,7 +211,8 @@ jobs:
                       d = r.json().get("data",{})
                       ay = d.get("ayahs",[])
                       if ay: return ay[0].get("text","")
-              except: pass
+              except Exception:
+                  pass
               return ""
 
           def ai_call(sess, prompt, mt=580):
@@ -211,13 +222,15 @@ jobs:
                       r = sess.post(url, headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"},
                           json={"model":model,"messages":[{"role":"user","content":prompt}],
                                 "temperature":0.5,"max_tokens":mt}, timeout=75)
-                      if r.status_code==200: return r.json()["choices"][0]["message"]["content"].strip()
+                      if r.status_code==200:
+                          return r.json()["choices"][0]["message"]["content"].strip()
                       raise Exception(f"HTTP {r.status_code}")
                   return _f
               def _gem():
                   url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={C['GEM']}"
                   r = sess.post(url, json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=75)
-                  if r.status_code==200: return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                  if r.status_code==200:
+                      return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                   raise Exception(f"HTTP {r.status_code}")
               def _coh():
                   r = sess.post("https://api.cohere.com/v1/chat",
@@ -238,19 +251,22 @@ jobs:
                   r = sess.post("https://api.cerebras.ai/v1/chat/completions",
                       headers={"Authorization":f"Bearer {C['CER']}","Content-Type":"application/json"},
                       json={"model":"llama3.1-70b","messages":[{"role":"user","content":prompt}],"max_tokens":mt}, timeout=75)
-                  if r.status_code==200: return r.json()["choices"][0]["message"]["content"].strip()
+                  if r.status_code==200:
+                      return r.json()["choices"][0]["message"]["content"].strip()
                   raise Exception(f"HTTP {r.status_code}")
               def _ds():
                   r = sess.post("https://api.deepseek.com/chat/completions",
                       headers={"Authorization":f"Bearer {C['DS']}","Content-Type":"application/json"},
                       json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],"max_tokens":mt}, timeout=75)
-                  if r.status_code==200: return r.json()["choices"][0]["message"]["content"].strip()
+                  if r.status_code==200:
+                      return r.json()["choices"][0]["message"]["content"].strip()
                   raise Exception(f"HTTP {r.status_code}")
               def _pol():
                   b = C["POL"].rstrip("/")
                   r = sess.post(f"{b}/openai", headers={"Content-Type":"application/json"},
                       json={"model":"openai","messages":[{"role":"user","content":prompt}]}, timeout=75)
-                  if r.status_code==200: return r.json()["choices"][0]["message"]["content"].strip()
+                  if r.status_code==200:
+                      return r.json()["choices"][0]["message"]["content"].strip()
                   raise Exception(f"HTTP {r.status_code}")
 
               if C["OR"]:  provs.append(("OpenRouter", _oai("https://openrouter.ai/api/v1/chat/completions", C["OR"], "openai/gpt-4o-mini")))
@@ -305,7 +321,8 @@ jobs:
                       if r.status_code==200:
                           t = r.json().get("translatedText","")
                           if t: log("Trans OK: Libre"); return t
-                  except Exception as e: log(f"Libre FAIL: {str(e)[:70]}","WARN")
+                  except Exception as e:
+                      log(f"Libre FAIL: {str(e)[:70]}","WARN")
               if C["DXL"]:
                   try:
                       r = sess.post(f"{C['DXL'].rstrip('/')}/translate",
@@ -313,7 +330,8 @@ jobs:
                       if r.status_code==200:
                           t = r.json().get("data","")
                           if t: log("Trans OK: DeepLX"); return t
-                  except Exception as e: log(f"DeepLX FAIL: {str(e)[:70]}","WARN")
+                  except Exception as e:
+                      log(f"DeepLX FAIL: {str(e)[:70]}","WARN")
               return ""
 
           def tts(sess, text, out, lang="hi"):
@@ -329,7 +347,8 @@ jobs:
                           if a:
                               with open(out,"wb") as f: f.write(base64.b64decode(a[0]))
                               STATUS["TTS"] = "Success (Sarvam)"; log("TTS OK: Sarvam"); return True
-                  except Exception as e: ERRORS.append(f"TTS Sarvam: {str(e)[:55]}")
+                  except Exception as e:
+                      ERRORS.append(f"TTS Sarvam: {str(e)[:55]}")
               if C["11L"]:
                   try:
                       r = sess.post("https://api.elevenlabs.io/v1/text-to-speech/pNInz6obpgDQGcFmaJgB",
@@ -339,7 +358,8 @@ jobs:
                       if r.status_code==200 and len(r.content)>5000:
                           with open(out,"wb") as f: f.write(r.content)
                           STATUS["TTS"] = "Success (ElevenLabs)"; log("TTS OK: ElevenLabs"); return True
-                  except Exception as e: ERRORS.append(f"TTS 11Labs: {str(e)[:55]}")
+                  except Exception as e:
+                      ERRORS.append(f"TTS 11Labs: {str(e)[:55]}")
               if C["VCF"]:
                   try:
                       r = sess.post(f"{C['VCF'].rstrip('/')}/api/tts",
@@ -347,7 +367,8 @@ jobs:
                       if r.status_code==200 and len(r.content)>5000:
                           with open(out,"wb") as f: f.write(r.content)
                           STATUS["TTS"] = "Success (VoiceCafe)"; log("TTS OK: VoiceCafe"); return True
-                  except Exception as e: ERRORS.append(f"TTS VoiceCafe: {str(e)[:55]}")
+                  except Exception as e:
+                      ERRORS.append(f"TTS VoiceCafe: {str(e)[:55]}")
               if C["DPG"]:
                   try:
                       r = sess.post("https://api.deepgram.com/v1/speak?model=aura-asteria-en",
@@ -356,18 +377,21 @@ jobs:
                       if r.status_code==200 and len(r.content)>5000:
                           with open(out,"wb") as f: f.write(r.content)
                           STATUS["TTS"] = "Success (Deepgram)"; log("TTS OK: Deepgram"); return True
-                  except Exception as e: ERRORS.append(f"TTS Deepgram: {str(e)[:55]}")
+                  except Exception as e:
+                      ERRORS.append(f"TTS Deepgram: {str(e)[:55]}")
               try:
                   voices = {"hi":"hi-IN-MadhurNeural","ar":"ar-SA-HamedNeural","en":"en-US-ChristopherNeural"}
                   v = voices.get(lang, voices["hi"])
                   txt = out + ".txt"
                   with open(txt,"w",encoding="utf-8") as f: f.write(text)
                   cmd = f'edge-tts --file "{txt}" --write-media "{out}" --voice {v} --rate=-8% --pitch=-2Hz --volume=+12%'
-                  subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=320)
+                  subprocess.run(cmd, shell=True, check=True, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=320)
                   os.remove(txt)
                   if os.path.exists(out) and os.path.getsize(out)>1200:
                       STATUS["TTS"] = "Success (Edge)"; log("TTS OK: Edge"); return True
-              except Exception as e: ERRORS.append(f"TTS Edge: {str(e)[:55]}")
+              except Exception as e:
+                  ERRORS.append(f"TTS Edge: {str(e)[:55]}")
               STATUS["TTS"] = "Failed"
               return False
 
@@ -386,14 +410,16 @@ jobs:
                               if a.status_code==200 and len(a.content)>16000:
                                   with open(out,"wb") as f: f.write(a.content)
                                   STATUS["Music"] = "Success (Freesound)"; return True
-                  except Exception as e: ERRORS.append(f"Music Freesound: {str(e)[:55]}")
+                  except Exception as e:
+                      ERRORS.append(f"Music Freesound: {str(e)[:55]}")
               if C["FSU"]:
                   try:
                       r = sess.get(C["FSU"], timeout=80)
                       if r.status_code==200 and len(r.content)>16000:
                           with open(out,"wb") as f: f.write(r.content)
                           STATUS["Music"] = "Success (FSU)"; return True
-                  except Exception as e: ERRORS.append(f"Music FSU: {str(e)[:55]}")
+                  except Exception as e:
+                      ERRORS.append(f"Music FSU: {str(e)[:55]}")
               if C["JAM"]:
                   try:
                       r = sess.get("https://api.jamendo.com/v3.0/tracks/",
@@ -406,7 +432,8 @@ jobs:
                               if a.status_code==200 and len(a.content)>16000:
                                   with open(out,"wb") as f: f.write(a.content)
                                   STATUS["Music"] = "Success (Jamendo)"; return True
-                  except Exception as e: ERRORS.append(f"Music Jamendo: {str(e)[:55]}")
+                  except Exception as e:
+                      ERRORS.append(f"Music Jamendo: {str(e)[:55]}")
               if C["PX"]:
                   try:
                       r = sess.get("https://pixabay.com/api/",
@@ -419,7 +446,8 @@ jobs:
                               if a.status_code==200 and len(a.content)>16000:
                                   with open(out,"wb") as f: f.write(a.content)
                                   STATUS["Music"] = "Success (Pixabay)"; return True
-                  except Exception as e: ERRORS.append(f"Music Pixabay: {str(e)[:55]}")
+                  except Exception as e:
+                      ERRORS.append(f"Music Pixabay: {str(e)[:55]}")
               STATUS["Music"] = "Failed"
               return False
 
@@ -441,13 +469,14 @@ jobs:
                                   pick = sorted(ff, key=lambda x: abs(x.get("width",0)-1080))[0]
                                   if pick.get("width",0) < 720: continue
                                   if dl(sess, pick["link"], "tmp_bg.mp4"):
-                                      cmd = (f'ffmpeg -y -stream_loop -1 -i tmp_bg.mp4 -t {dur+2} '
+                                      cmd = (f'ffmpeg -nostdin -y -stream_loop -1 -i tmp_bg.mp4 -t {dur+2} '
                                              f'-vf "scale=1080:1920:force_original_aspect_ratio=increase,'
                                              f'crop=1080:1920,setsar=1,eq=brightness=0.03:saturation=1.08" '
                                              f'-an -c:v libx264 -preset veryfast -crf 21 {out}')
                                       runc(cmd, 340)
                                       STATUS["BG"] = f"Success (Pexels/{q})"; log(f"BG OK: Pexels/{q}"); return True
-                      except Exception as e: ERRORS.append(f"BG Pexels: {str(e)[:55]}")
+                      except Exception as e:
+                          ERRORS.append(f"BG Pexels: {str(e)[:55]}")
                   if C["PX"]:
                       try:
                           ori = "vertical" if orient=="portrait" else "horizontal"
@@ -459,21 +488,24 @@ jobs:
                                       u = h.get("videos",{}).get(sk,{}).get("url")
                                       if not u: continue
                                       if dl(sess, u, "tmp_bg.mp4"):
-                                          cmd = (f'ffmpeg -y -stream_loop -1 -i tmp_bg.mp4 -t {dur+2} '
+                                          cmd = (f'ffmpeg -nostdin -y -stream_loop -1 -i tmp_bg.mp4 -t {dur+2} '
                                                  f'-vf "scale=1080:1920:force_original_aspect_ratio=increase,'
                                                  f'crop=1080:1920,setsar=1,eq=brightness=0.03:saturation=1.08" '
                                                  f'-an -c:v libx264 -preset veryfast -crf 21 {out}')
                                           runc(cmd, 340)
                                           STATUS["BG"] = f"Success (Pixabay/{q})"; log(f"BG OK: Pixabay/{q}"); return True
-                      except Exception as e: ERRORS.append(f"BG Pixabay: {str(e)[:55]}")
+                      except Exception as e:
+                          ERRORS.append(f"BG Pixabay: {str(e)[:55]}")
               STATUS["BG"] = "Failed"
               return False
 
           FONTS = {
               "arabic": ["/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
-                         "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"],
+                         "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+                         "/usr/share/fonts/opentype/noto/NotoNaskhArabic-Bold.ttf"],
               "devanagari": ["/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
-                             "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"],
+                             "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+                             "/usr/share/fonts/opentype/noto/NotoSansDevanagari-Bold.ttf"],
               "latin": ["/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
                         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
           }
@@ -487,7 +519,8 @@ jobs:
                       try:
                           f = ImageFont.truetype(p, sz)
                           FCACHE[k]=f; return f
-                      except: continue
+                      except Exception:
+                          continue
               f = ImageFont.load_default(); FCACHE[k]=f; return f
 
           def draw_shadow_text(d, pos, text, font, fill, shadow_color=(0,0,0,210), offset=(3,3), **kwargs):
@@ -541,7 +574,8 @@ jobs:
                   try:
                       lg = Image.open("avatar.png").convert("RGBA").resize((200, 82), Image.Resampling.LANCZOS)
                       img.paste(lg, (1080-230, 30), lg)
-                  except: pass
+                  except Exception:
+                      pass
 
               pink = (255, 148, 188)
               cyan = (110, 218, 255)
@@ -609,14 +643,14 @@ jobs:
               draw_shadow_text(d, ((1080-w3)//2, 1000), brand, fb, (212,175,55, int(255*a)))
 
           def master(inp, outp):
-              cmd = (f'ffmpeg -y -i "{inp}" -af "atempo=0.90,'
+              cmd = (f'ffmpeg -nostdin -y -i "{inp}" -af "atempo=0.90,'
                      f'afade=t=in:st=0:d=1.0,'
                      f'loudnorm=I=-14:TP=-1.5:LRA=11,volume=1.40" "{outp}"')
               try:
-                  subprocess.run(cmd, shell=True, check=True,
+                  subprocess.run(cmd, shell=True, check=True, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=190)
                   return outp
-              except:
+              except Exception:
                   shutil.copy(inp, outp)
                   return outp
 
@@ -624,11 +658,11 @@ jobs:
               try:
                   vlen = MP3(v).info.length
                   fade_out_start = max(0.5, vlen - 2.2)
-                  cmd = (f'ffmpeg -y -i "{v}" -i "{m}" '
+                  cmd = (f'ffmpeg -nostdin -y -i "{v}" -i "{m}" '
                          f'-filter_complex "[1:a]volume={vol},afade=t=in:st=0:d=2.0,afade=t=out:st={fade_out_start}:d=2.0[bg];'
                          f'[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]" '
                          f'-map "[aout]" -c:a libmp3lame -b:a 192k "{o}"')
-                  subprocess.run(cmd, shell=True, check=True,
+                  subprocess.run(cmd, shell=True, check=True, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=220)
               except Exception as e:
                   log(f"Mix failed, using voice only: {e}", "WARN")
@@ -648,16 +682,19 @@ jobs:
                   media = MediaFileUpload(path, mimetype="video/mp4", resumable=True, chunksize=5*1024*1024)
                   req = srv.files().create(body=meta, media_body=media, fields="id")
                   resp = None
-                  while resp is None: _, resp = req.next_chunk()
+                  while resp is None:
+                      _, resp = req.next_chunk()
                   fid = resp.get("id")
                   if not fid: return None, None
                   try:
                       srv.permissions().create(fileId=fid, body={"type":"anyone","role":"reader"}).execute()
-                  except: pass
+                  except Exception:
+                      pass
                   STATUS["Drive"] = f"Success (ID: {fid})"
                   log(f"Drive OK: {fid}")
-                  return (f"https://drive.google.com/file/d/{fid}/view",
-                          f"https://drive.google.com/uc?export=download&id={fid}")
+                  view_url = f"https://drive.google.com/file/d/{fid}/view"
+                  dl_url = f"https://drive.google.com/uc?id={fid}&export=download&confirm=t"
+                  return view_url, dl_url
               except Exception as e:
                   STATUS["Drive"] = "Failed"
                   ERRORS.append(f"Drive: {str(e)[:110]}")
@@ -716,39 +753,39 @@ jobs:
 
           def send_final_report(thumb_path):
               if not (C["TG"] and C["TG_CHAT"]): return
-              msg = "📊 *Sawaj Studio Bot – Story Report*\n\n"
-              msg += f"📌 *Mode:* `{C['MODE'].upper()}`\n"
-              msg += "━━━━━━━━━━━━━━━━━━━━\n"
-              msg += f"🤖 *AI:* {STATUS['AI']}\n"
-              msg += f"🎙️ *TTS:* {STATUS['TTS']}\n"
-              msg += f"🎵 *Music:* {STATUS['Music']}\n"
-              msg += f"🎬 *Background:* {STATUS['BG']}\n"
-              msg += f"☁️ *Drive:* {STATUS['Drive']}\n"
-              msg += f"📘 *Facebook:* {STATUS['FB']}\n"
-              msg += f"📸 *Instagram:* {STATUS['IG']}\n"
-              msg += "━━━━━━━━━━━━━━━━━━━━\n"
+              msg = "Sawaj Studio Bot - Story Report\n\n"
+              msg += f"Mode: {C['MODE'].upper()}\n"
+              msg += "------------------------------\n"
+              msg += f"AI: {STATUS['AI']}\n"
+              msg += f"TTS: {STATUS['TTS']}\n"
+              msg += f"Music: {STATUS['Music']}\n"
+              msg += f"Background: {STATUS['BG']}\n"
+              msg += f"Drive: {STATUS['Drive']}\n"
+              msg += f"Facebook: {STATUS['FB']}\n"
+              msg += f"Instagram: {STATUS['IG']}\n"
+              msg += "------------------------------\n"
               if ERRORS:
-                  msg += "⚠️ *Errors/Warnings:*\n"
+                  msg += "Warnings/Errors:\n"
                   for err in ERRORS[:7]:
-                      msg += f"• {err}\n"
+                      msg += f"- {err}\n"
                   if len(ERRORS) > 7:
-                      msg += f"• ...and {len(ERRORS)-7} more.\n"
+                      msg += f"- ...and {len(ERRORS)-7} more.\n"
               else:
-                  msg += "✅ *All systems completed successfully.*"
+                  msg += "All systems completed successfully."
               try:
                   if os.path.exists(thumb_path):
                       with open(thumb_path, 'rb') as f:
                           requests.post(f"https://api.telegram.org/bot{C['TG']}/sendPhoto",
-                              data={"chat_id": C["TG_CHAT"], "caption": msg, "parse_mode": "Markdown"},
+                              data={"chat_id": C["TG_CHAT"], "caption": msg[:1024]},
                               files={"photo": f}, timeout=40)
                   else:
                       requests.post(f"https://api.telegram.org/bot{C['TG']}/sendMessage",
-                          json={"chat_id": C["TG_CHAT"], "text": msg, "parse_mode": "Markdown"}, timeout=25)
+                          json={"chat_id": C["TG_CHAT"], "text": msg[:4000]}, timeout=25)
               except Exception as e:
                   log(f"Telegram report failed: {e}", "WARN")
 
           def main():
-              log(f"SAWAJ STUDIO BOT – START (Mode: {C['MODE']})")
+              log(f"SAWAJ STUDIO BOT - START (Mode: {C['MODE']})")
               sess = new_session()
               tmp = ["s_raw.mp3","s_v.mp3","s_voice.mp3","music.mp3","bg.mp4","tmp_bg.mp4","avatar.png"]
               thumb_path = "output/final/thumbnail.jpg"
@@ -801,13 +838,13 @@ jobs:
                   if get_music(sess, "music.mp3", vd+12):
                       mix_voice_music("s_v.mp3", "music.mp3", "s_voice.mp3")
                       voice = "s_voice.mp3"
-                      # final safety check after mix
                       try:
                           final_len = MP3(voice).info.length
                           if final_len > 58:
                               log(f"Mixed audio too long ({final_len:.1f}s), using pure voice", "WARN")
                               voice = "s_v.mp3"
-                      except: pass
+                      except Exception:
+                          pass
 
                   bg_ok = get_bg(sess, "bg.mp4", vd+5.0, "portrait")
                   if not bg_ok:
@@ -828,7 +865,8 @@ jobs:
                               cv.paste(im,(b,b),im)
                               cv.save("avatar.png")
                               break
-                          except: continue
+                          except Exception:
+                              continue
                   has_logo = os.path.exists("avatar.png")
 
                   os.makedirs("s_frames", exist_ok=True)
@@ -845,14 +883,14 @@ jobs:
                           draw_intro(img, d, t, intro)
                       elif t < intro + vd:
                           draw_main(img, d, t-intro, vd, tarjuma, h.get("arabic",""), h["english"],
-                                    f"#{h['number']} • {h['collection']}", has_logo)
+                                    f"#{h['number']} - {h['collection']}", has_logo)
                       else:
                           draw_outro(img, d, t-(intro+vd), outro)
                       img.save(f"s_frames/frame_{fi:05d}.png")
 
                   os.makedirs("output/final", exist_ok=True)
                   out = "output/final/Final_Story.mp4"
-                  cmd = (f'ffmpeg -y -i bg.mp4 -framerate 25 -i s_frames/frame_%05d.png -i {voice} '
+                  cmd = (f'ffmpeg -nostdin -y -i bg.mp4 -framerate 25 -i s_frames/frame_%05d.png -i {voice} '
                          f'-filter_complex "[0:v][1:v]overlay=0:0:shortest=1,format=yuv420p[outv]" '
                          f'-map "[outv]" -map 2:a -c:v libx264 -preset veryfast -crf 20 '
                          f'-maxrate 9.5M -bufsize 19M -c:a aac -b:a 192k -t {round(total,2)} '
@@ -872,28 +910,29 @@ jobs:
                               "#HindiHadith #IslamicQuotes #Sunnah #Dawah #Islam #SawajStudio "
                               "#HadithOfTheDay #IslamicReminder")
 
-                  caption = (f"Hadith: {tarjuma}\n\n"
-                             f"Matlab: {matlab}\n\n"
-                             f"Naseehah: {naseehah}\n\n"
-                             f"{h.get('english','')}\n\n")
-                  if quran:
-                      caption += f"{quran}\n\n"
-                  caption += hashtags
+                  cap_parts = []
+                  if tarjuma: cap_parts.append(f"Hadith: {tarjuma}")
+                  if matlab:  cap_parts.append(f"Matlab: {matlab}")
+                  if naseehah: cap_parts.append(f"Naseehah: {naseehah}")
+                  if h.get('english'): cap_parts.append(h['english'])
+                  if quran: cap_parts.append(quran)
+                  cap_parts.append(hashtags)
+                  caption = "\n\n".join(cap_parts)
 
                   if C["MODE"] == "offline_test":
-                      log("Mode = Offline Test → Skipping social media")
+                      log("Mode = Offline Test -> Skipping social media")
                       STATUS["FB"] = "Skipped (Offline Test)"
                       STATUS["IG"] = "Skipped (Offline Test)"
                   else:
-                      log("Mode = Online → Uploading to Facebook + Instagram Stories")
+                      log("Mode = Online -> Uploading to Facebook + Instagram Stories")
                       fb_story_upload(out, caption)
                       if dd_url:
                           ig_story_upload(dd_url, caption)
                       else:
-                          log("No Drive URL → IG Story skipped", "ERROR")
+                          log("No Drive URL -> IG Story skipped", "ERROR")
                           STATUS["IG"] = "Failed (No Drive URL)"
 
-                  log("ALL DONE – Sawaj Studio Bot finished successfully")
+                  log("ALL DONE - Sawaj Studio Bot finished successfully")
               except Exception as e:
                   log(f"FATAL: {str(e)}", "ERROR")
                   ERRORS.append(f"FATAL: {str(e)}")
@@ -902,14 +941,15 @@ jobs:
                   for f in tmp:
                       try:
                           if os.path.exists(f): os.remove(f)
-                      except: pass
+                      except Exception:
+                          pass
                   shutil.rmtree("s_frames", ignore_errors=True)
                   send_final_report(thumb_path)
 
           if __name__ == "__main__":
               main()
           PYEOF
-          python3 Sawaj_studio_bot_story_fb_ig.py
+          python3 bot.py
 
       - name: Cleanup Workspace
         if: always()
