@@ -3,30 +3,27 @@ name: Sync ON to Live Repository
 on:
   push:
     branches:
-      - main     # Jab bhi main branch par code push hoga, tab ye run hoga
-      - master   # Agar aapka main branch master hai
+      - main
+      - master
 
 jobs:
   sync-repo:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. ON repository ka code checkout karna
       - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Pura commit history lane ke liye
+          fetch-depth: 0
+          token: ${{ secrets.TOKEN_GITHUB }}
 
-      # 2. Live Repository me code push karna
       - name: Push to Live Repo
         env:
-          GH_PAT: ${{ secrets.LIVE_REPO_TOKEN }} # ON repo ka secret token
+          GH_PAT: ${{ secrets.TOKEN_GITHUB }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Live repo ko as a remote target add karna
+          # Remote setup aur push
           git remote add live https://x-access-token:${GH_PAT}@github.com/SAWAJ-STUDIO-LAB/Live.git
-          
-          # Live repo me main branch push karna
           git push -u live HEAD:main --force
