@@ -1,2 +1,0 @@
-"""FB IG YT Reel Video"""
-__version__ = "1.0.0"
