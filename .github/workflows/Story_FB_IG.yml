@@ -53,6 +53,14 @@ jobs:
           CEREBRAS_API_KEY_AI: ${{ secrets.CEREBRAS_API_KEY_AI }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           POLLINATIONS_API_URL: ${{ secrets.POLLINATIONS_API_URL }}
+          TOGETHER_API_KEY_AI: ${{ secrets.TOGETHER_API_KEY_AI }}
+          FIREWORKS_API_KEY_AI: ${{ secrets.FIREWORKS_API_KEY_AI }}
+          OPENAI_API_KEY_AI: ${{ secrets.OPENAI_API_KEY_AI }}
+          ANTHROPIC_API_KEY_AI: ${{ secrets.ANTHROPIC_API_KEY_AI }}
+          PERPLEXITY_API_KEY_AI: ${{ secrets.PERPLEXITY_API_KEY_AI }}
+          SAMBANOVA_API_KEY_AI: ${{ secrets.SAMBANOVA_API_KEY_AI }}
+          XAI_API_KEY_AI: ${{ secrets.XAI_API_KEY_AI }}
+          NOVITA_API_KEY_AI: ${{ secrets.NOVITA_API_KEY_AI }}
           LIBRETRANSLATE_URL: ${{ secrets.LIBRETRANSLATE_URL }}
           DEEPLX_URL: ${{ secrets.DEEPLX_URL }}
           SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
@@ -128,7 +136,7 @@ jobs:
                   except Exception: pass
               return False
 
-          # ============ AI PROVIDERS ============
+          # ============== AI CALL PRIMITIVES ==============
           def _oai(s, url, key, model, p, mt):
               r = s.post(url, headers={"Authorization": f"Bearer {key}",
                                        "Content-Type": "application/json"},
@@ -138,7 +146,7 @@ jobs:
                   return r.json()["choices"][0]["message"]["content"].strip()
               raise Exception(f"HTTP {r.status_code}")
 
-          def try_oai_multi(s, url, key, models, p, mt):
+          def _multi_oai(s, url, key, models, p, mt):
               last = "no model"
               for m in models:
                   try:
@@ -185,6 +193,16 @@ jobs:
                           last = str(e)[:40]
               raise Exception(last)
 
+          def _ant(s, key, p, mt):
+              r = s.post("https://api.anthropic.com/v1/messages",
+                         headers={"x-api-key":key,"anthropic-version":"2023-06-01",
+                                  "Content-Type":"application/json"},
+                         json={"model":"claude-3-5-haiku-20241022","max_tokens":mt,
+                               "messages":[{"role":"user","content":p}]}, timeout=65)
+              if r.status_code == 200:
+                  return r.json()["content"][0]["text"].strip()
+              raise Exception(f"HTTP {r.status_code}")
+
           def _hf(s, key, p, mt):
               r = s.post("https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct",
                          headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -213,36 +231,82 @@ jobs:
                       last = str(e)[:40]
               raise Exception(last)
 
+          # ============== AI ORCHESTRATOR ==============
           def AI(s, p, mt=580):
               cfgs = []
+
+              # Priority 1: Free reliable
               if E("POLLINATIONS_API_URL"):
                   cfgs.append(("Pollinations", lambda: _pol(s, E("POLLINATIONS_API_URL"), p, mt)))
               if E("GEMINI_API_KEY_AI"):
                   cfgs.append(("Gemini", lambda: _gem(s, E("GEMINI_API_KEY_AI"), p, mt)))
               if E("GROQ_API_KEY_AI"):
-                  cfgs.append(("Groq", lambda: try_oai_multi(s,
+                  cfgs.append(("Groq", lambda: _multi_oai(s,
                       "https://api.groq.com/openai/v1/chat/completions", E("GROQ_API_KEY_AI"),
                       ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile",
                        "llama3-70b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"], p, mt)))
+
+              # Priority 2: Fast inference
               if E("CEREBRAS_API_KEY_AI"):
-                  cfgs.append(("Cerebras", lambda: try_oai_multi(s,
+                  cfgs.append(("Cerebras", lambda: _multi_oai(s,
                       "https://api.cerebras.ai/v1/chat/completions", E("CEREBRAS_API_KEY_AI"),
                       ["llama-3.3-70b", "llama3.1-70b", "llama3.1-8b"], p, mt)))
+              if E("SAMBANOVA_API_KEY_AI"):
+                  cfgs.append(("SambaNova", lambda: _multi_oai(s,
+                      "https://api.sambanova.ai/v1/chat/completions", E("SAMBANOVA_API_KEY_AI"),
+                      ["Meta-Llama-3.3-70B-Instruct", "Meta-Llama-3.1-70B-Instruct",
+                       "Meta-Llama-3.1-8B-Instruct"], p, mt)))
+
+              # Priority 3: Big providers
               if E("MISTRAL_API_KEY_AI"):
-                  cfgs.append(("Mistral", lambda: try_oai_multi(s,
+                  cfgs.append(("Mistral", lambda: _multi_oai(s,
                       "https://api.mistral.ai/v1/chat/completions", E("MISTRAL_API_KEY_AI"),
                       ["mistral-small-latest", "open-mistral-7b", "open-mixtral-8x7b",
                        "mistral-large-latest"], p, mt)))
               if E("NVIDIA_API_KEY"):
-                  cfgs.append(("NVIDIA", lambda: try_oai_multi(s,
+                  cfgs.append(("NVIDIA", lambda: _multi_oai(s,
                       "https://integrate.api.nvidia.com/v1/chat/completions", E("NVIDIA_API_KEY"),
                       ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct",
-                       "meta/llama-3.1-8b-instruct"], p, mt)))
+                       "meta/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct-v0.3"], p, mt)))
+              if E("TOGETHER_API_KEY_AI"):
+                  cfgs.append(("Together", lambda: _multi_oai(s,
+                      "https://api.together.xyz/v1/chat/completions", E("TOGETHER_API_KEY_AI"),
+                      ["meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                       "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+                       "mistralai/Mixtral-8x7B-Instruct-v0.1"], p, mt)))
+              if E("FIREWORKS_API_KEY_AI"):
+                  cfgs.append(("Fireworks", lambda: _multi_oai(s,
+                      "https://api.fireworks.ai/inference/v1/chat/completions", E("FIREWORKS_API_KEY_AI"),
+                      ["accounts/fireworks/models/llama-v3p3-70b-instruct",
+                       "accounts/fireworks/models/llama-v3p1-70b-instruct",
+                       "accounts/fireworks/models/mixtral-8x7b-instruct"], p, mt)))
+              if E("OPENAI_API_KEY_AI"):
+                  cfgs.append(("OpenAI", lambda: _multi_oai(s,
+                      "https://api.openai.com/v1/chat/completions", E("OPENAI_API_KEY_AI"),
+                      ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"], p, mt)))
+              if E("XAI_API_KEY_AI"):
+                  cfgs.append(("xAI", lambda: _multi_oai(s,
+                      "https://api.x.ai/v1/chat/completions", E("XAI_API_KEY_AI"),
+                      ["grok-2-latest", "grok-beta", "grok-2-1212"], p, mt)))
+              if E("PERPLEXITY_API_KEY_AI"):
+                  cfgs.append(("Perplexity", lambda: _multi_oai(s,
+                      "https://api.perplexity.ai/chat/completions", E("PERPLEXITY_API_KEY_AI"),
+                      ["llama-3.1-sonar-small-128k-online",
+                       "llama-3.1-sonar-large-128k-online"], p, mt)))
+              if E("NOVITA_API_KEY_AI"):
+                  cfgs.append(("Novita", lambda: _multi_oai(s,
+                      "https://api.novita.ai/v3/openai/chat/completions", E("NOVITA_API_KEY_AI"),
+                      ["meta-llama/llama-3.3-70b-instruct",
+                       "meta-llama/llama-3.1-70b-instruct"], p, mt)))
               if E("OPENROUTER_API_KEY_AI"):
-                  cfgs.append(("OpenRouter", lambda: try_oai_multi(s,
+                  cfgs.append(("OpenRouter", lambda: _multi_oai(s,
                       "https://openrouter.ai/api/v1/chat/completions", E("OPENROUTER_API_KEY_AI"),
                       ["meta-llama/llama-3.3-70b-instruct:free",
                        "google/gemini-flash-1.5", "openai/gpt-4o-mini"], p, mt)))
+
+              # Priority 4: Others
+              if E("ANTHROPIC_API_KEY_AI"):
+                  cfgs.append(("Anthropic", lambda: _ant(s, E("ANTHROPIC_API_KEY_AI"), p, mt)))
               if E("COHERE_API_KEY_AI"):
                   cfgs.append(("Cohere", lambda: _coh(s, E("COHERE_API_KEY_AI"), p, mt)))
               if E("HUGGINGFACE_API_KEY_AI"):
@@ -258,7 +322,7 @@ jobs:
                       ER.append(f"AI {name}: {str(e)[:60]}")
               S["AI"] = "FAIL"; return ""
 
-          # ============ HADITH / QURAN ============
+          # ============== HADITH / QURAN ==============
           BOOKS = [("eng-bukhari","ara-bukhari","Sahih al-Bukhari",7000),
                    ("eng-muslim","ara-muslim","Sahih Muslim",7000)]
 
@@ -345,7 +409,7 @@ jobs:
               except Exception: pass
               return ""
 
-          # ============ TTS (Edge first - proper Hindi) ============
+          # ============== TTS ==============
           def TTS(s, txt, out, lang="hi"):
               sar = E("SARVAM_API_KEY")
               if sar:
@@ -408,7 +472,7 @@ jobs:
                   except Exception as e: ER.append(f"TTS DPG: {str(e)[:50]}")
               S["TTS"] = "FAIL"; return False
 
-          # ============ MUSIC ============
+          # ============== MUSIC ==============
           def MUS(s, out):
               fs = E("FREESOUND_API_KEY")
               if fs:
@@ -465,7 +529,7 @@ jobs:
                   except Exception as e: ER.append(f"Mus PX: {str(e)[:50]}")
               S["Music"] = "FAIL"; return False
 
-          # ============ BACKGROUND ============
+          # ============== BACKGROUND ==============
           def BG(s, out, dur=62):
               qs = ["mosque night","night sky stars","islamic architecture night",
                     "prayer silhouette","beautiful mosque exterior night",
@@ -509,7 +573,7 @@ jobs:
                       except Exception as e: ER.append(f"BG PX: {str(e)[:50]}")
               S["BG"] = "FAIL"; return False
 
-          # ============ FONTS / DRAWING ============
+          # ============== FONTS / DRAWING ==============
           FONTS = {
               "ar": ["/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
                      "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"],
@@ -612,7 +676,7 @@ jobs:
               bb3 = d.textbbox((0,0), b, font=fb); w3 = bb3[2]-bb3[0]
               SH(d, ((1080-w3)//2, 1000), b, fb, (212,175,55, int(255*a)))
 
-          # ============ AUDIO ============
+          # ============== AUDIO ==============
           def MASTER(inp, out):
               try:
                   subprocess.run(f'ffmpeg -nostdin -y -i "{inp}" -af "atempo=0.90,afade=t=in:st=0:d=1.0,'
@@ -640,7 +704,7 @@ jobs:
               except Exception:
                   shutil.copy(v, o)
 
-          # ============ DRIVE ============
+          # ============== DRIVE ==============
           def DRIVE(path):
               if not os.path.exists(path): return None, None
               try:
@@ -672,7 +736,7 @@ jobs:
                   S["Drive"] = "FAIL"; ER.append(f"Drive: {str(e)[:100]}")
                   return None, None
 
-          # ============ FB ============
+          # ============== FACEBOOK ==============
           def FBUP(s, path, cap):
               tok = E("FB_PAGE_ACCESS_TOKEN"); pid = E("FACEBOOK_PAGE_ID")
               if not (tok and pid):
@@ -691,7 +755,7 @@ jobs:
                   if i < 2: time.sleep(5*(i+1))
               S["FB"] = "FAIL"; ER.append("FB: all retries failed"); return False
 
-          # ============ IG ============
+          # ============== INSTAGRAM ==============
           def GET_IG_ID(s):
               ig = E("INSTAGRAM_BUSINESS_ACCOUNT_ID")
               if ig: return ig
@@ -740,7 +804,7 @@ jobs:
                   S["IG"] = "FAIL"; ER.append(f"IG: {str(e)[:100]}")
               return False
 
-          # ============ TELEGRAM REPORT ============
+          # ============== TELEGRAM REPORT ==============
           def REPORT(thumb):
               tok = E("TELEGRAM_BOT_TOKEN"); cid = E("TELEGRAM_CHAT_ID")
               if not (tok and cid): return
@@ -766,7 +830,7 @@ jobs:
               except Exception as e:
                   log(f"TG fail: {e}", "WARN")
 
-          # ============ MAIN ============
+          # ============== MAIN ==============
           def MAIN():
               log(f"=== START (Mode: {MODE}) ===")
               s = HS()
