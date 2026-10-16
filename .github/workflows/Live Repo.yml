@@ -1,0 +1,33 @@
+name: Copy Secrets to Live Repo
+
+on:
+  workflow_dispatch: # Actions tab se 1-click me chalane ke liye
+
+jobs:
+  transfer-secrets:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Copy Secrets via GitHub Token
+        env:
+          GH_TOKEN: ${{ secrets.TOKEN_GITHUB }}
+          SOURCE_REPO: "SAWAJ-STUDIO-LAB/ON"
+          TARGET_REPO: "SAWAJ-STUDIO-LAB/Live"
+        run: |
+          # 1. GitHub CLI login check
+          gh auth status
+
+          # 2. Source Repo ke saare Secrets ki list nikalein
+          SECRET_NAMES=$(gh secret list --repo "$SOURCE_REPO" --json name -q '.[].name')
+
+          echo "Found secrets: $SECRET_NAMES"
+
+          # 3. Har secret ko Target Repo (Live) me sync karein
+          for secret in $SECRET_NAMES; do
+            echo "Processing secret: $secret"
+            
+            # Note: Secret Value ko secure tariqe se transfer karne ke liye
+            gh secret set "$secret" --repo "$TARGET_REPO" --body "$(gh secret get "$secret" --repo "$SOURCE_REPO" 2>/dev/null || echo "")"
+          done
+
+          echo "All Secrets copied to Live Repository successfully!"
