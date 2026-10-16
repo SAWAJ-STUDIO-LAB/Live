@@ -1,0 +1,22 @@
+name: Sync to Live Repo
+
+on:
+  push:
+    branches:
+      - main  # Ya aapka jo bhi default branch ho
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Repo
+        uses: actions/checkout@v3
+
+      - name: Push to Live Repo
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.LIVE_REPO_TOKEN }}
+        run: |
+          git config --global user.email "your-email@example.com"
+          git config --global user.name "Your Name"
+          git remote add live https://x-access-token:${API_TOKEN_GITHUB}@github.com/SAWAJ-STUDIO-LAB/Live.git
+          git push -u live main --force
