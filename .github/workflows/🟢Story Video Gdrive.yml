@@ -101,7 +101,7 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           python3 << 'PYEOF'
-          import os, re, time, random, subprocess, requests, shutil, sys, datetime
+          import os, re, time, random, subprocess, requests, shutil, sys, datetime, textwrap
           from mutagen.mp3 import MP3
           from PIL import Image, ImageDraw, ImageFont, ImageFilter
           from google.oauth2.credentials import Credentials
@@ -266,7 +266,6 @@ jobs:
                                           if files:
                                               path = f"vid_{len(downloaded_vids)}.mp4"
                                               if download_video(files[0]["link"], path):
-                                                  # Process each video to match duration
                                                   processed = f"proc_{len(downloaded_vids)}.mp4"
                                                   seg_dur = dur / 3.0
                                                   run_cmd(f'ffmpeg -y -stream_loop -1 -i {path} -vf "scale=1200:2140:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z=\'min(zoom+0.0004,1.06)\':d=1:x=\'iw/2-(iw/zoom/2)\':y=\'ih/2-(ih/zoom/2)\':s=1080x1920,setsar=1,{DARKEN}" -t {seg_dur:.2f} -an -c:v libx264 -preset veryfast -crf 18 {processed}')
@@ -278,7 +277,6 @@ jobs:
                       api_status["Background"]["Strict"] = "failed (Not enough videos)"
                       return None
 
-                  # Crossfade Multiple Videos
                   out = "bg_final.mp4"
                   if len(downloaded_vids) == 2:
                       run_cmd(f'ffmpeg -y -i {downloaded_vids[0]} -i {downloaded_vids[1]} -filter_complex "[0:v][1:v]xfade=transition=fade:duration=1:offset={dur/2 - 0.5:.2f}[outv]" -map "[outv]" -t {dur:.2f} -c:v libx264 -preset veryfast -crf 18 {out}')
@@ -289,7 +287,6 @@ jobs:
                   return out
 
               def make_logo():
-                  # Logo Generation Logic
                   try:
                       canvas = Image.new("RGBA", (400, 170), (0,0,0,0))
                       draw = ImageDraw.Draw(canvas)
@@ -332,50 +329,43 @@ jobs:
               d1 = MP3("s_v.mp3").info.length
               voice_dur = d1 + 7.0
 
-              # Background Video Fetch (Multi-Scene)
               bg_vid = get_multi_bg(voice_dur + 4.0)
               if not bg_vid: raise Exception("Strict Islamic Background Videos nahi mili.")
 
-              # SFX Generation (Whoosh and Ding)
               run_cmd('ffmpeg -y -f lavfi -i "sine=frequency=1000:duration=0.3" -af "afade=t=in:st=0:d=0.05,afade=t=out:st=0.2:d=0.1" ding.mp3')
               run_cmd('ffmpeg -y -f lavfi -i "anoisesrc=color=pink:duration=1.0" -af "afade=t=in:st=0:d=0.2,afade=t=out:st=0.8:d=0.2" whoosh.mp3')
 
-              # Audio Mixing
-              # 1. Concat Intro + Hadith
               run_cmd('ffmpeg -y -i intro_voice.mp3 -i s_v.mp3 -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[mainvoice]" -map "[mainvoice]" s_fullvoice.mp3')
-              
-              # 2. Add Ducking + SFX + Background Music (if available, else just voice)
-              # We skip music API here to ensure strict fast build, but we can add dummy music volume 0
               run_cmd(f'ffmpeg -y -i s_fullvoice.mp3 -i whoosh.mp3 -i ding.mp3 -filter_complex "[0:a]volume=1.2[voice]; [1:a]adelay=3000|3000[wh]; [2:a]adelay=6000|6000[dg]; [voice][wh][dg]amix=inputs=3:duration=first:dropout_transition=2[aout]" -map "[aout]" -c:a libmp3lame -b:a 192k s_final_audio.mp3')
 
               make_logo()
               fonts_dir = os.path.expanduser("~/.fonts")
               date_str = datetime.datetime.now().strftime("%d %B %Y")
 
-              # Advanced ASS Subtitles (Karaoke + Glow)
-              ass = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
-WrapStyle: 0
-ScaledBorderAndShadow: yes
+              # Fixed ASS String using textwrap.dedent to avoid YAML error
+              ass = textwrap.dedent(f"""[Script Info]
+              ScriptType: v4.00+
+              PlayResX: 1080
+              PlayResY: 1920
+              WrapStyle: 0
+              ScaledBorderAndShadow: yes
 
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,Noto Sans,95,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,10,4,5,40,40,0,1
-Style: Intro,Noto Sans,75,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,5,40,40,0,1
-Style: Arabic,Noto Naskh Arabic,90,&H00F0E6D2,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,2,40,40,140,1
-Style: Hindi,Noto Sans Devanagari,75,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,3,2,40,40,420,1
-Style: English,Noto Sans,60,&H00D0D0D0,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,40,40,620,1
-Style: Outro,Noto Sans,85,&H00F0E6D2,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,5,40,40,0,1
+              [V4+ Styles]
+              Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+              Style: Hook,Noto Sans,95,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,10,4,5,40,40,0,1
+              Style: Intro,Noto Sans,75,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,5,40,40,0,1
+              Style: Arabic,Noto Naskh Arabic,90,&H00F0E6D2,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,2,40,40,140,1
+              Style: Hindi,Noto Sans Devanagari,75,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,3,2,40,40,420,1
+              Style: English,Noto Sans,60,&H00D0D0D0,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,3,2,40,40,620,1
+              Style: Outro,Noto Sans,85,&H00F0E6D2,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,5,40,40,0,1
 
-[Events]
-Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
-Dialogue: 0,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{{\\fad(500,500)\\pos(540,400)\\t(0,500,\\fscx110\\fscy110)}}क्या आप जानते हैं?
-Dialogue: 0,0:00:02.50,0:00:05.00,Intro,,0,0,0,,{{\\fad(500,500)\\pos(540,960)}}आज की हदीस
-Dialogue: 0,0:00:05.00,0:00:07.00,Intro,,0,0,0,,{{\\fad(500,500)\\pos(540,960)}}{date_str}
-Dialogue: 0,0:00:06.00,0:00:08.00,Intro,,0,0,0,,{{\\fad(500,500)\\pos(540,1300)\\c&H00FF00&\\t(0,500,\\fscx120\\fscy120)}}Subscribe & Share
-"""
+              [Events]
+              Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+              Dialogue: 0,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{{\\fad(500,500)\\pos(540,400)\\t(0,500,\\fscx110\\fscy110)}}क्या आप जानते हैं?
+              Dialogue: 0,0:00:02.50,0:00:05.00,Intro,,0,0,0,,{{\\fad(500,500)\\pos(540,960)}}आज की हदीस
+              Dialogue: 0,0:00:05.00,0:00:07.00,Intro,,0,0,0,,{{\\fad(500,500)\\pos(540,960)}}{date_str}
+              Dialogue: 0,0:00:06.00,0:00:08.00,Intro,,0,0,0,,{{\\fad(500,500)\\pos(540,1300)\\c&H00FF00&\\t(0,500,\\fscx120\\fscy120)}}Subscribe & Share
+              """)
 
               def ts(t): return f"0:{int(t//60):02d}:{t%60:05.2f}"
               def typed(text, style, start, end):
@@ -401,7 +391,6 @@ Dialogue: 0,0:00:06.00,0:00:08.00,Intro,,0,0,0,,{{\\fad(500,500)\\pos(540,1300)\
               final = "Final_Global_Story.mp4"
               total = 7.0 + d1 + 4.0
 
-              # CINEMATIC FILTERS: Film Grain, Light Leaks, Vignette, Subtitles, Logo Overlay
               filters = "[0:v]scale=1200:2140:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0004,1.06)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920,setsar=1,eq=contrast=1.10:brightness=0.02:saturation=1.12,vignette=PI/5,noise=alls=10:allf=t[bg]; "
               
               if os.path.exists("avatar.png"):
